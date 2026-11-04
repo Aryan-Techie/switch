@@ -35,6 +35,7 @@ import { Spinner } from '@renderer/lib/ui/spinner';
 import { dashboardOrigin, type SwitchServer } from '@shared/core/switch-servers/switch-servers';
 import { GuardrailsSection } from './GuardrailsSection';
 import { localServerStore } from './local-server-store';
+import { startManagedServer } from './managed-server-actions';
 import { MessagingAppsCard } from './MessagingAppsCard';
 import { openServerPage } from './open-server-page';
 import { remoteServerStore } from './remote-server-store';
@@ -177,10 +178,11 @@ const ServerMainPanel = observer(function ServerMainPanel() {
   // button asks for, so the page should not look idle while one is in flight.
   const busy = refreshingPage || store.refreshing.has(serverId);
   const unreachable = store.isUnreachable(serverId);
-  // A local server run without Docker has no dashboard: switch-core runs there
-  // without the dashboard's pages, so its address serves the API alone.
-  const servesNoDashboard =
-    server.managed && server.managementKind === 'local' && localServerStore.isNative;
+  // A local server run without Docker serves the dashboard's pages only when
+  // it was started with them; one started by an older Console runs on without
+  // them until a restart, which the page offers instead of a link to nothing.
+  const servesNoDashboard = localServerStore.lacksAdminPages(server);
+  const restartForDashboard = servesNoDashboard && localServerStore.adminPages === 'restart';
   const PlacementIcon = serverIcon(server);
   const title = workspaceTitle(server);
 
@@ -329,6 +331,27 @@ const ServerMainPanel = observer(function ServerMainPanel() {
             >
               <ExternalLink className="size-4" />
               Open
+            </Button>
+          </div>
+        )}
+
+        {detailsVisible && !unreachable && restartForDashboard && (
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 space-y-0.5">
+              <h3 className="text-sm font-medium text-foreground">Full admin interface</h3>
+              <p className="text-xs text-foreground-muted">
+                Restart the server to turn it on. Agents reconnect once it is back.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={localServerStore.isTransitioning}
+              onClick={() => startManagedServer(server)}
+            >
+              <RefreshCw className="size-4" />
+              Restart
             </Button>
           </div>
         )}

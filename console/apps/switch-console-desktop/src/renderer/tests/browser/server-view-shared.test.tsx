@@ -80,6 +80,8 @@ vi.mock('@renderer/features/switch-servers/local-server-store', () => ({
     upgrade: null,
     message: null,
     deployedTelemetry: null,
+    adminPages: null,
+    lacksAdminPages: () => false,
     start: (...args: unknown[]) => state.localStart(...args),
     reset: vi.fn(),
   },
