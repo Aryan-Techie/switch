@@ -3310,6 +3310,11 @@ type RoomSummaryJson = {
   can_write?: boolean;
   can_manage?: boolean;
   can_unlink?: boolean;
+  group_id?: string | null;
+  group_name?: string | null;
+  owner_name?: string | null;
+  read_visibility?: string;
+  connected_user_count?: number;
 };
 
 function mapRoomSummary(r: RoomSummaryJson): RemoteRoomSummary {
@@ -3330,6 +3335,10 @@ function mapRoomSummary(r: RoomSummaryJson): RemoteRoomSummary {
     ...(r.write_visibility !== undefined
       ? { writeVisibility: visibilityOf(r.write_visibility) }
       : {}),
+    ...(r.read_visibility !== undefined ? { readVisibility: visibilityOf(r.read_visibility) } : {}),
+    ...(r.group_id !== undefined ? { groupId: r.group_id, groupName: r.group_name ?? null } : {}),
+    ...(r.owner_name !== undefined ? { ownerName: r.owner_name } : {}),
+    ...(r.connected_user_count !== undefined ? { connectedUserCount: r.connected_user_count } : {}),
     ...(r.can_write !== undefined && r.can_manage !== undefined
       ? {
           serverPermissions: {
