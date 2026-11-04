@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { channelChoiceCards, optionsForBridge, channelIdProblem } from './room-channel-choices';
+import {
+  channelChoiceCards,
+  optionsForBridge,
+  channelIdProblem,
+  normalizedChannelId,
+} from './room-channel-choices';
 import { DEFAULT_ROOM_OPTIONS } from './room-create-request';
 
 const bridge = (type: string, channelIdsRefused: string | null = null) => ({
@@ -75,6 +80,16 @@ describe('channelIdProblem', () => {
     expect(channelIdProblem('mattermost', 'town-square')).toMatch(/View Info/);
     expect(channelIdProblem('discord', 'general')).toMatch(/Copy Channel ID/);
     expect(channelIdProblem('teams', '19%3aabc%40thread.tacv2')).toMatch(/%3a/);
+  });
+
+  it('takes an id differing only in case or surrounding space as meant', () => {
+    expect(channelIdProblem('slack', '  c0123abcd ')).toBeNull();
+    expect(normalizedChannelId('slack', '  c0123abcd ')).toBe('C0123ABCD');
+    expect(normalizedChannelId('mattermost', 'K8X4C1N6TJF3MBG9YZQ5WRD7OE')).toBe(
+      'k8x4c1n6tjf3mbg9yzq5wrd7oe'
+    );
+    // Teams ids are left as pasted, but for the space around them.
+    expect(normalizedChannelId('teams', ' 19:AbC@thread.tacv2 ')).toBe('19:AbC@thread.tacv2');
   });
 
   it('says nothing for a blank id or a platform it does not know', () => {
