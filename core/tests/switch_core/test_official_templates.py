@@ -291,3 +291,17 @@ def test_switch_buddy_tells_telegram_users_to_reply_to_the_bot():
         "reply to the bot's message" in text
         or "reply to the Switch bot's message" in text
     )
+
+
+def test_switch_buddy_offers_choices_in_its_question_form():
+    """Switch draws a host's question form as a card with buttons on Slack and
+    Discord, but only for one single-choice question, and hosts without forms
+    need the choices as numbered text."""
+    text = " ".join((_PACKAGED / "switch-buddy" / "AGENT.md").read_text().split())
+    assert "use your host's question form" in text
+    assert "`AskUserQuestion`" in text
+    assert "one single-choice question per form" in text
+    assert "With no question form, list numbered options" in text
+    # Form answers are not consent to create: the proposal is its own form.
+    assert "end with a separate proposal" in text
+    assert "create only after explicit confirmation" in text

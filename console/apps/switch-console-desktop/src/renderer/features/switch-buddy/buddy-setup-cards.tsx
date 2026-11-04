@@ -23,8 +23,8 @@ import {
 import {
   BUDDY_CHAT_NAME,
   buddyHandoffRequestId,
-  continueBuddyInSlack,
-  resumeBuddyInSlack,
+  continueBuddyInChannel,
+  resumeBuddyInChannel,
 } from './open-buddy';
 
 /** What the person says in the Welcome chat when they choose to stay in Console. */
@@ -33,7 +33,7 @@ export const BUDDY_STAY_MESSAGE = 'I’ll stay in Switch Console for now.';
 /**
  * The setup cards under the greeting in the buddy's Welcome chat: pick a chat
  * app, connect it, link your account, then continue with the buddy there — in
- * a private channel made for them on Slack, by their own invite elsewhere. Or
+ * a private channel made for them on Slack or Discord, by their own invite elsewhere. Or
  * stay here, which says so in the chat for the buddy to pick up. Drawn only in
  * the Welcome chat.
  */
@@ -83,6 +83,8 @@ const Cards = observer(function Cards({
   const [reopened, setReopened] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [notConnected, setNotConnected] = useState<BuddyPlatform | null>(null);
+  const [chosenBridgeId, setChosenBridgeId] = useState<string | null>(null);
 
   const bridgesQuery = useQuery({
     queryKey: ['remote-bridges', workspaceId],
@@ -93,7 +95,7 @@ const Cards = observer(function Cards({
   const resumeQueries = useQueries({
     queries: resumeBridges.map((bridge) => ({
       queryKey: ['buddy-handoff', buddyHandoffRequestId(agentId, bridge.id)],
-      queryFn: () => resumeBuddyInSlack(serverId, agentId, bridge.id),
+      queryFn: () => resumeBuddyInChannel(serverId, agentId, bridge),
       retry: false,
       staleTime: Infinity,
     })),
@@ -104,15 +106,25 @@ const Cards = observer(function Cards({
     if (query.isError) resumes[bridge.id] = 'failed';
     else if (query.isSuccess) resumes[bridge.id] = query.data;
   });
-  const platform = buddyPlatform(picked, bridgesQuery.data ?? null);
+  // With nothing picked, open on the app a hand-off was already made in.
+  const handedOff = resumeBridges.find((bridge) => {
+    const resume = resumes[bridge.id];
+    return resume != null && resume !== 'failed';
+  })?.type as BuddyPlatform | undefined;
+  const platform = buddyPlatform(picked ?? handedOff ?? null, bridgesQuery.data ?? null);
   const label = platform ? PLATFORM_NAMES[platform] : '';
   const step = buddySetupStep({
     platform,
     bridges: bridgesQuery.data ?? null,
     identities: ids.identities,
     resumes,
+    chosenBridgeId,
     failed: bridgesQuery.isError || ids.error != null,
   });
+  // Every connected one of the app is a choice, linked or not; the cards follow the one chosen.
+  const connectedBridges = (bridgesQuery.data ?? []).filter(
+    (bridge) => bridge.type === platform && bridge.status === 'active'
+  );
   const retry = () => {
     void bridgesQuery.refetch();
     ids.refresh();
@@ -126,10 +138,10 @@ const Cards = observer(function Cards({
     enabled: doneRoomId !== null,
   });
   const channelUrl = roomQuery.data?.externalChannelUrl ?? null;
-  const openSlack = (url: string) =>
+  const openChannel = (url: string) =>
     void reportOpenAttempt(
       rpc.switchRooms.openRoomChannel({ serverId, channelUrl: url }),
-      'Could not open Slack',
+      `Could not open ${label}`,
       url
     );
 
@@ -137,7 +149,7 @@ const Cards = observer(function Cards({
     setCreating(true);
     setCreateError(null);
     try {
-      await continueBuddyInSlack(serverId, { agentId }, bridge.id);
+      await continueBuddyInChannel(serverId, { agentId }, bridge);
       await queryClient.invalidateQueries({
         queryKey: ['buddy-handoff', buddyHandoffRequestId(agentId, bridge.id)],
       });
@@ -187,36 +199,21 @@ const Cards = observer(function Cards({
     <div className="@container mt-4 flex flex-col gap-3" data-testid="buddy-setup-cards">
       <div className="font-semibold">Where does your team chat?</div>
       <div className="grid grid-cols-2 gap-3 @lg:grid-cols-4">
-        {TILES.map((app) =>
-          app.live ? (
-            <button
-              key={app.bridgeType}
-              type="button"
-              aria-pressed={pressed(app.bridgeType)}
-              onClick={() => setPicked(app.bridgeType)}
-              className={cn(
-                'flex flex-col items-start gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:bg-background-1 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
-                pressed(app.bridgeType) &&
-                  'border-foreground/40 shadow-sm ring-1 ring-foreground/20'
-              )}
-            >
-              <BridgeIcon bridgeType={app.bridgeType} size={28} />
-              <TileText name={app.name} subtitle={app.subtitle} />
-            </button>
-          ) : (
-            <button
-              key={app.bridgeType}
-              type="button"
-              aria-disabled="true"
-              title="Coming soon"
-              className="flex cursor-not-allowed flex-col items-start gap-3 rounded-lg border bg-background p-3 text-left opacity-50"
-            >
-              <BridgeIcon bridgeType={app.bridgeType} size={28} />
-              <TileText name={app.name} subtitle={app.subtitle} />
-              <span className="text-xs text-foreground-muted">Coming soon</span>
-            </button>
-          )
-        )}
+        {TILES.map((app) => (
+          <button
+            key={app.bridgeType}
+            type="button"
+            aria-pressed={pressed(app.bridgeType)}
+            onClick={() => setPicked(app.bridgeType)}
+            className={cn(
+              'flex flex-col items-start gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:bg-background-1 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+              pressed(app.bridgeType) && 'border-foreground/40 shadow-sm ring-1 ring-foreground/20'
+            )}
+          >
+            <BridgeIcon bridgeType={app.bridgeType} size={28} />
+            <TileText name={app.name} subtitle={app.subtitle} />
+          </button>
+        ))}
       </div>
       <Button variant="ghost" size="sm" className="self-start" onClick={stay}>
         No chat app? Continue here in Switch Console
@@ -248,11 +245,29 @@ const Cards = observer(function Cards({
           title={`Connect ${label}`}
           description={`Add ${label} to your Switch workspace.`}
           footer={
-            <Button
-              onClick={() => showConnect({ serverId, platform: step.platform, onClosed: retry })}
-            >
-              Connect {label}
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                onClick={() => {
+                  setNotConnected(null);
+                  showConnect({
+                    serverId,
+                    platform: step.platform,
+                    // Said only once the re-read is in, so a connection just made never flashes it.
+                    onClosed: () => {
+                      ids.refresh();
+                      void bridgesQuery.refetch().then(() => setNotConnected(step.platform));
+                    },
+                  });
+                }}
+              >
+                Connect {label}
+              </Button>
+              {notConnected === step.platform && (
+                <span className="text-sm text-foreground-muted">
+                  {label} isn’t connected yet. Try again when you’re ready.
+                </span>
+              )}
+            </div>
           }
         />
       )}
@@ -274,15 +289,24 @@ const Cards = observer(function Cards({
                 : `So I recognise you in ${step.bridge.displayName}.`
             }
             footer={
-              <div className="flex flex-wrap items-center gap-3">
-                {step.bridge.type === 'telegram' && (
-                  <InviteCommand platform="telegram" agentName={agentName} />
-                )}
-                <Button
-                  onClick={() => showClaimIdentity({ workspaceId, bridgeId: step.bridge.id })}
-                >
-                  Link account
-                </Button>
+              <div className="flex flex-col items-start gap-3">
+                <BridgeChoice
+                  platform={step.bridge.type}
+                  bridges={connectedBridges}
+                  chosenId={step.bridge.id}
+                  disabled={false}
+                  onChoose={setChosenBridgeId}
+                />
+                <div className="flex flex-wrap items-center gap-3">
+                  {step.bridge.type === 'telegram' && (
+                    <InviteCommand platform="telegram" agentName={agentName} />
+                  )}
+                  <Button
+                    onClick={() => showClaimIdentity({ workspaceId, bridgeId: step.bridge.id })}
+                  >
+                    Link account
+                  </Button>
+                </div>
               </div>
             }
           />
@@ -294,31 +318,41 @@ const Cards = observer(function Cards({
           <div className="flex items-center gap-2 rounded-lg bg-background-success px-3 py-2 text-sm text-foreground-success">
             <CheckCircle2 className="size-4 shrink-0" />
             <span className="min-w-0 flex-1">
-              <span className="font-semibold">Slack ready</span> — Slack connected · account linked
+              <span className="font-semibold">{label} ready</span> — {label} connected · account
+              linked
             </span>
-            <BridgeIcon bridgeType="slack" size={16} />
+            <BridgeIcon bridgeType={step.bridge.type} size={16} />
           </div>
           <PlatformCard
-            platform="slack"
-            title="Continue in a private Slack channel"
+            platform={step.bridge.type}
+            title={`Continue in a private ${label} channel`}
             description="I’ll create a private channel just for us and continue there."
             error={createError}
             footer={
-              <Button disabled={creating} onClick={() => void create(step.bridge)}>
-                {creating ? (
-                  <>
-                    <Spinner size="sm" />
-                    Creating channel…
-                  </>
-                ) : createError ? (
-                  'Try again'
-                ) : (
-                  <>
-                    Create channel and continue
-                    <ArrowRight />
-                  </>
-                )}
-              </Button>
+              <div className="flex flex-col items-start gap-3">
+                <BridgeChoice
+                  platform={step.bridge.type}
+                  bridges={connectedBridges}
+                  chosenId={step.bridge.id}
+                  disabled={creating}
+                  onChoose={setChosenBridgeId}
+                />
+                <Button disabled={creating} onClick={() => void create(step.bridge)}>
+                  {creating ? (
+                    <>
+                      <Spinner size="sm" />
+                      Creating channel…
+                    </>
+                  ) : createError ? (
+                    'Try again'
+                  ) : (
+                    <>
+                      Create channel and continue
+                      <ArrowRight />
+                    </>
+                  )}
+                </Button>
+              </div>
             }
           />
         </>
@@ -341,7 +375,18 @@ const Cards = observer(function Cards({
                 ? `In a Telegram group with you and the ${step.bridge.displayName} bot, send this if you haven't yet. Then reply to the bot's message, mention ${agentName} in that reply, and say what you work on.`
                 : `Add the Switch app to a Teams chat or channel and send this there. Then mention ${agentName} with a short note on what you work on.`
             }
-            footer={<InviteCommand platform={step.bridge.type} agentName={agentName} />}
+            footer={
+              <div className="flex flex-col items-start gap-3">
+                <BridgeChoice
+                  platform={step.bridge.type}
+                  bridges={connectedBridges}
+                  chosenId={step.bridge.id}
+                  disabled={false}
+                  onChoose={setChosenBridgeId}
+                />
+                <InviteCommand platform={step.bridge.type} agentName={agentName} />
+              </div>
+            }
           />
         </>
       )}
@@ -358,18 +403,18 @@ const Cards = observer(function Cards({
           <StatusRow>
             <CheckCircle2 className="size-4 shrink-0 text-foreground-success" />
             <span className="min-w-0 flex-1 truncate text-foreground-success">
-              {roomQuery.data?.linkedChannelName ?? 'Private Slack channel'} ready
+              {roomQuery.data?.linkedChannelName ?? `Private ${label} channel`} ready
             </span>
             {channelUrl ? (
-              <Button size="sm" onClick={() => openSlack(channelUrl)}>
-                Open Slack
+              <Button size="sm" onClick={() => openChannel(channelUrl)}>
+                Open {label}
                 <ArrowRight />
               </Button>
             ) : (
               <span className="text-foreground-muted">
                 {roomQuery.isPending
-                  ? 'Looking up the Slack channel…'
-                  : 'Couldn’t get a link to the Slack channel. Find it in Slack.'}
+                  ? `Looking up the ${label} channel…`
+                  : `Couldn’t get a link to the ${label} channel. Find it in ${label}.`}
               </span>
             )}
           </StatusRow>
@@ -386,15 +431,56 @@ const Cards = observer(function Cards({
 const PLATFORM_NAMES: Record<BuddyPlatform, string> = {
   slack: 'Slack',
   teams: 'Microsoft Teams',
+  discord: 'Discord',
   telegram: 'Telegram',
 };
 
 const TILES = [
-  { live: true, bridgeType: 'slack', name: 'Slack', subtitle: 'Channels & DMs' },
-  { live: true, bridgeType: 'teams', name: 'Microsoft Teams', subtitle: 'Teams & chats' },
-  { live: false, bridgeType: 'discord', name: 'Discord', subtitle: 'Servers & channels' },
-  { live: true, bridgeType: 'telegram', name: 'Telegram', subtitle: 'Groups & chats' },
+  { bridgeType: 'slack', name: 'Slack', subtitle: 'Channels & DMs' },
+  { bridgeType: 'teams', name: 'Microsoft Teams', subtitle: 'Teams & chats' },
+  { bridgeType: 'discord', name: 'Discord', subtitle: 'Servers & channels' },
+  { bridgeType: 'telegram', name: 'Telegram', subtitle: 'Groups & chats' },
 ] as const;
+
+/** Which of the app's connections, when there is more than one to choose from. */
+function BridgeChoice({
+  platform,
+  bridges,
+  chosenId,
+  disabled,
+  onChoose,
+}: {
+  platform: string;
+  bridges: RemoteBridge[];
+  chosenId: string;
+  disabled: boolean;
+  onChoose: (bridgeId: string) => void;
+}) {
+  if (bridges.length < 2) return null;
+  const label = PLATFORM_NAMES[platform as BuddyPlatform];
+  const unit = platform === 'discord' ? 'server' : 'workspace';
+  return (
+    <div
+      role="group"
+      aria-label={`${label} ${unit}`}
+      className="flex flex-wrap items-center gap-2 text-sm"
+    >
+      <span className="text-foreground-muted">Which {unit}?</span>
+      {bridges.map((bridge) => (
+        <Button
+          key={bridge.id}
+          size="sm"
+          variant={bridge.id === chosenId ? 'default' : 'outline'}
+          aria-pressed={bridge.id === chosenId}
+          disabled={disabled}
+          onClick={() => onChoose(bridge.id)}
+        >
+          {bridge.displayName}
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 function TileText({ name, subtitle }: { name: string; subtitle: string }) {
   return (
