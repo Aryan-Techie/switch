@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RoomGroupDetail } from "../../data/api";
@@ -72,5 +72,16 @@ describe("GroupsPage", () => {
     expect(screen.queryByRole("button", { name: /new group/i })).toBeNull();
     expect(screen.queryByLabelText("Edit Customers")).toBeNull();
     expect(screen.queryByLabelText("Delete Customers")).toBeNull();
+  });
+
+  it("lets only an admin add rooms to a group", () => {
+    renderAs(true);
+    fireEvent.click(screen.getByText("Customers"));
+    expect(screen.getByRole("button", { name: /add rooms/i })).toBeTruthy();
+    cleanup();
+
+    renderAs(false);
+    fireEvent.click(screen.getByText("Customers"));
+    expect(screen.queryByRole("button", { name: /add rooms/i })).toBeNull();
   });
 });

@@ -303,12 +303,15 @@ function MembershipPanel({
   group,
   byId,
   rooms,
+  canAddRooms,
   onChanged,
 }: {
   selectedId: string | null;
   group: RoomGroupDetail | null;
   byId: Map<string, RoomGroupDetail>;
   rooms: RoomSummary[];
+  /** Only a workspace admin may put rooms in a group. */
+  canAddRooms: boolean;
   onChanged: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -390,7 +393,7 @@ function MembershipPanel({
         <Typography variant="h6" sx={{ flexGrow: 1 }} noWrap>
           {title}
         </Typography>
-        {!isStandalone && (
+        {!isStandalone && canAddRooms && (
           <Button
             variant="contained"
             size="small"
@@ -406,8 +409,9 @@ function MembershipPanel({
 
       {isStandalone && (
         <Typography variant="body2" color="text.secondary">
-          These rooms aren't in any group. Select a group and use “Add rooms” to
-          organize them.
+          {canAddRooms
+            ? "These rooms aren't in any group. Select a group and use “Add rooms” to organize them."
+            : "These rooms aren't in any group. A workspace admin can file them into one."}
         </Typography>
       )}
 
@@ -563,6 +567,7 @@ export default function GroupsPage() {
               group={selectedGroup}
               byId={byId}
               rooms={roomList}
+              canAddRooms={canManageGroups}
               onChanged={refetchAll}
             />
           </Paper>

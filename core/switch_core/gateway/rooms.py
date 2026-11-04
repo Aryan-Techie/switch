@@ -10,7 +10,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from switch_core.agent_templates import plan_template
-from switch_core.authz import Action, Principal, can, require, require_manage
+from switch_core.authz import (
+    Action,
+    Principal,
+    can,
+    require,
+    require_group_filing,
+    require_manage,
+)
 from switch_core.bridges.agent.operations.agent_management import management_port
 from switch_core.bridges.agent.protocol.agent_core import AgentCore
 from switch_core.bridges.collaboration.models import (
@@ -90,6 +97,13 @@ from switch_core.template_v2 import is_v2_text
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _require_group_filing(is_admin: bool) -> None:
+    try:
+        require_group_filing(is_admin)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
 
 
 async def _require_room(
@@ -413,8 +427,11 @@ async def create_room(
     external_user_store: Annotated[ExternalUserStore, Depends(get_external_user_store)],
     protocol: Annotated[AgentCore, Depends(get_protocol)],
     user: Annotated[User, Depends(get_current_user)],
+    is_admin: Annotated[bool, Depends(get_tenant_is_admin)],
 ) -> RoomDetail:
     _validate_create(req)
+    if req.group_id is not None:
+        _require_group_filing(is_admin)
     config = RoomCreateConfig(
         name=req.name,
         description=req.description,
@@ -1041,8 +1058,13 @@ async def put_room_group(
     user: Annotated[User, Depends(get_current_user)],
     is_admin: Annotated[bool, Depends(get_tenant_is_admin)],
 ) -> RoomDetail:
-    """Assign the room to a group, or make it standalone (`group_id=null`)."""
+    """Assign the room to a group, or make it standalone (`group_id=null`).
+
+    Taking a room out of its group needs write access to it; putting it in
+    one also needs a workspace admin."""
     await _require_room(session, room_store, room_id, user, "write", is_admin)
+    if req.group_id is not None:
+        _require_group_filing(is_admin)
     try:
         await room_store.set_group(session, room_id, req.group_id)
     except ValueError as e:
